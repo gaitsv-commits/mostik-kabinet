@@ -100,12 +100,21 @@ select.chip{appearance:none;-webkit-appearance:none;padding-right:28px;backgroun
 .file{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);text-align:left;width:100%}
 .file span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .muted{color:var(--muted);font-size:13px}
+.acts{display:flex;flex-wrap:wrap;gap:8px}
+.acts .btn{flex:1 1 calc(50% - 4px)}
+.btn.danger{color:var(--red);border-color:var(--red)}
+.btn:disabled{opacity:.55}
+.inp{width:100%;min-height:44px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);font-size:16px;resize:vertical}
+.box label{font-size:13px;color:var(--muted)}
+.row-inp{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.toast{position:fixed;left:16px;right:16px;bottom:calc(20px + env(safe-area-inset-bottom));z-index:40;background:var(--head);color:var(--headText);padding:12px 16px;border-radius:12px;text-align:center;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.25)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 </style>
 </head>
 <body>
 <div id="app"></div>
 <div id="sheet" class="sheet" hidden></div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 <script>
 // ===== Кабинет «Капитанского мостика» — мини-приложение Telegram =====
 // Данные приходят из n8n (сценарий «Мостик — Кабинет»), он проверяет подпись Telegram и роль.
@@ -301,7 +310,7 @@ function render() {
 function openSheet(id) {
   var t = tasksNow().filter(function (x) { return x.id === id; })[0];
   var el = document.getElementById('sheet');
-  if (!t) return;
+  if (!t) { closeSheet(); return; }
   S.sel = id;
   var f = [['Исполнитель', t.who || '—'], ['Постановщик', t.from || '—'], ['Срок', t.due ? stamp(t.due) : 'без срока'], ['Приоритет', t.pri || 'Обычно'],
     ['Вид обязательства', t.kind || '—'], ['Тип', t.type || '—'], ['Заказ', t.ord || '—'], ['Клиент / контрагент', t.cl || '—']];
@@ -315,6 +324,7 @@ function openSheet(id) {
     (t.di.hint ? '<span class="hint' + (t.di.late ? ' red' : '') + '">' + esc(t.di.hint) + '</span>' : '') + '</div>';
   if (t.st === 'На паузе' && t.note) h += '<div class="note pause"><b>Причина паузы:</b> ' + esc(t.note) + '</div>';
   if ((t.ret || 0) > 0) h += '<div class="note ret"><b>Возвратов: ' + t.ret + '.</b>' + (t.retNote ? ' ' + esc(t.retNote) : '') + '</div>';
+  h += '<div id="actbox">' + actBoxHtml(t) + '</div>';
   h += '<div class="fields">' + f.map(function (x) { return '<div><span>' + x[0] + '</span><b>' + esc(x[1]) + '</b></div>'; }).join('') + '</div>';
   if (t.desc) h += '<div class="box"><span>Описание</span><div>' + esc(t.desc) + '</div></div>';
   if (t.src) h += '<div class="box"><span>Как поставили</span><div style="font-style:italic">' + esc(t.src) + '</div></div>';
@@ -323,16 +333,138 @@ function openSheet(id) {
   h += '<div class="box"><span>Файлы</span>' + (files.length ? files.map(function (fl, i) {
     return '<button class="file" data-act="file" data-v="' + i + '">' + ICON.file + '<span>' + esc(fl.n) + '</span></button>';
   }).join('') : '<div class="muted">Файлов нет.</div>') + '</div>';
-  h += '<div class="muted">Принять, вернуть или перенести срок — пока кнопками под задачей в чате с ботом.</div></div>';
-  el.innerHTML = h; el.hidden = false; el.scrollTop = 0;
+  h += '</div>';
+  var keep = el.hidden === false && el.getAttribute('data-id') === id;
+  el.innerHTML = h; el.hidden = false; el.setAttribute('data-id', id);
+  if (!keep) el.scrollTop = 0;
   document.body.style.overflow = 'hidden';
   if (tg && tg.BackButton) { tg.BackButton.show(); }
 }
 function closeSheet() {
   S.sel = null;
-  var el = document.getElementById('sheet'); el.hidden = true; el.innerHTML = '';
+  FORM = null; ACT_ERR = '';
+  var el = document.getElementById('sheet'); el.hidden = true; el.innerHTML = ''; el.removeAttribute('data-id');
   document.body.style.overflow = '';
   if (tg && tg.BackButton) tg.BackButton.hide();
+}
+
+// ---------- действия с задачей (те же правила, что у кнопок в чате) ----------
+var FORM = null, BUSY = false, ACT_ERR = '';
+function findTask(id) { return (DATA && DATA.tasks || []).filter(function (x) { return x.id === id; })[0]; }
+function actionsFor(t) {
+  var me = DATA.me, st = t.st;
+  if (CLOSED.indexOf(st) >= 0) return [];
+  var isExec = t.whoId === me.id, isSet = t.fromId === me.id, canSet = isSet || me.role === 'Руководитель';
+  var a = [];
+  if (isExec && !isSet) {
+    if (st === 'Создана') a.push(['take', 'Взял в работу', 'primary']);
+    if (st === 'В работе') a.push(['pause', 'Пауза', '']);
+    if (st === 'На паузе') a.push(['resume', 'Продолжить', 'primary']);
+    if (st !== 'На проверке') a.push(['done', 'Готово — на проверку', st === 'В работе' ? 'primary' : '']);
+  }
+  if (canSet) {
+    if (st === 'На проверке') { a.push(['done', 'Принять', 'primary']); a.push(['return', 'Вернуть', '']); }
+    else if (!(isExec && !isSet)) a.push(['done', 'Закрыть задачу', 'primary']);
+    a.push(['move', 'Перенести срок', '']);
+    a.push(['cancel', 'Отменить', 'danger']);
+  }
+  return a;
+}
+function dayPlus(n) { return fDay.format(new Date(Date.now() + n * 864e5)); }
+function formHtml(t) {
+  var err = ACT_ERR ? '<div class="note ret">' + esc(ACT_ERR) + '</div>' : '';
+  var btns = '<div class="acts"><button class="btn primary" data-act="send"' + (BUSY ? ' disabled' : '') + '>' + (BUSY ? 'Отправляю…' : 'Сохранить') + '</button>' +
+    '<button class="btn" data-act="back"' + (BUSY ? ' disabled' : '') + '>Назад</button></div>';
+  if (FORM.act === 'move') {
+    var d = t.due ? new Date(t.due) : new Date(Date.now() + 864e5);
+    var dv = t.due ? fDay.format(d) : dayPlus(1), tv = t.due ? fHM.format(d) : '18:00';
+    return '<div class="box"><span>Новый срок</span><div class="row-inp">' +
+      '<label class="sr" for="fdate">Дата</label><input id="fdate" class="inp" type="date" value="' + dv + '">' +
+      '<label class="sr" for="ftime">Время</label><input id="ftime" class="inp" type="time" value="' + tv + '"></div>' +
+      '<div class="chips">' + [['Сегодня 18:00', 0, '18:00'], ['Завтра 10:00', 1, '10:00'], ['Завтра 18:00', 1, '18:00'], ['Через 3 дня', 3, '18:00']].map(function (q) {
+        return '<button class="chip" data-act="quick" data-v="' + q[1] + '|' + q[2] + '">' + q[0] + '</button>';
+      }).join('') + '</div></div>' + err + btns;
+  }
+  var lbl = FORM.act === 'pause' ? 'Почему пауза? Постановщик увидит причину.' : 'Что исправить? Исполнитель получит этот текст.';
+  return '<div class="box"><label for="ftext">' + lbl + '</label><textarea id="ftext" class="inp" rows="3" maxlength="500">' + esc(FORM.text || '') + '</textarea></div>' + err + btns;
+}
+function actBoxHtml(t) {
+  var acts = actionsFor(t);
+  if (!acts.length) return CLOSED.indexOf(t.st) >= 0 ? '' : '<div class="muted">Действий с этой задачей у вас нет.</div>';
+  if (FORM && FORM.id === t.id) return formHtml(t);
+  return '<div class="acts">' + acts.map(function (a) {
+    return '<button class="btn ' + a[2] + '" data-act="do" data-v="' + a[0] + '"' + (BUSY ? ' disabled' : '') + '>' + a[1] + '</button>';
+  }).join('') + '</div>' + (ACT_ERR ? '<div class="note ret">' + esc(ACT_ERR) + '</div>' : '') + (BUSY ? '<div class="muted">Отправляю…</div>' : '');
+}
+function renderActBox() {
+  var el = document.getElementById('actbox'), t = findTask(S.sel);
+  if (el && t) { var x = tasksNow().filter(function (y) { return y.id === t.id; })[0]; el.innerHTML = actBoxHtml(x); }
+}
+function notify(type) { try { tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(type); } catch (e) {} }
+function toast(text) {
+  var el = document.getElementById('toast'); if (!el) return;
+  el.textContent = text; el.hidden = false;
+  clearTimeout(toast._t); toast._t = setTimeout(function () { el.hidden = true; }, 2600);
+}
+function confirmAsk(text, cb) {
+  if (tg && tg.initData && tg.showConfirm) { try { tg.showConfirm(text, function (ok) { cb(!!ok); }); return; } catch (e) {} }
+  cb(typeof window.confirm === 'function' ? window.confirm(text) : true);
+}
+function startAction(act) {
+  var t = findTask(S.sel); if (!t || BUSY) return;
+  ACT_ERR = '';
+  if (act === 'pause' || act === 'return' || act === 'move') { FORM = { id: t.id, act: act, text: '' }; renderActBox(); return; }
+  var me = DATA.me, review = t.whoId === me.id && t.fromId !== me.id;
+  var q = act === 'cancel' ? 'Отменить задачу «' + t.t + '»?' :
+    act === 'done' ? (review ? 'Отправить «' + t.t + '» на проверку постановщику?' : (t.st === 'На проверке' ? 'Принять' : 'Закрыть') + ' задачу «' + t.t + '»?') : '';
+  if (!q) { doAction(act, '', ''); return; }
+  confirmAsk(q, function (ok) { if (ok) doAction(act, '', ''); });
+}
+function submitForm() {
+  if (!FORM || BUSY) return;
+  if (FORM.act === 'move') {
+    var dv = (document.getElementById('fdate') || {}).value || '', tv = (document.getElementById('ftime') || {}).value || '';
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dv) || !/^\d{2}:\d{2}/.test(tv)) { ACT_ERR = 'Укажите дату и время.'; renderActBox(); return; }
+    doAction('move', '', dv + 'T' + tv.slice(0, 5));
+  } else {
+    var tx = ((document.getElementById('ftext') || {}).value || '').trim();
+    FORM.text = tx;
+    if (!tx) { ACT_ERR = FORM.act === 'pause' ? 'Напишите причину паузы.' : 'Напишите, что исправить.'; renderActBox(); return; }
+    doAction(FORM.act, tx, '');
+  }
+}
+function doAction(act, text, due) {
+  var t = findTask(S.sel); if (!t || BUSY) return;
+  BUSY = true; ACT_ERR = ''; renderActBox();
+  var finish = function (ok, answer) {
+    BUSY = false;
+    if (ok) {
+      FORM = null; notify('success'); toast(answer || 'Готово');
+      if (DEMO) { render(); openSheet(S.sel); } else load();
+    } else { ACT_ERR = answer; notify('error'); renderActBox(); }
+  };
+  if (DEMO) { demoApply(t, act, text, due); finish(true, 'Готово (демо — ничего не сохранено)'); return; }
+  var body = new URLSearchParams();
+  body.set('initData', tg.initData); body.set('act', act); body.set('rec', t.id); body.set('text', text || ''); body.set('due', due || '');
+  fetch(API, { method: 'POST', body: body }).then(function (r) {
+    if (!r.ok) throw new Error('http ' + r.status);
+    return r.json();
+  }).then(function (j) {
+    if (j && j.tasks) { finish(false, 'В n8n ещё старая версия кабинета — установите «Мостик — Кабинет (v2)».'); return; }
+    finish(!!(j && j.ok), j && j.ok ? j.answer : ((j && j.answer) || errText(j && j.error)));
+  }).catch(function () {
+    finish(false, 'Не получилось сохранить: нет связи с сервером или ошибка в n8n. Попробуйте ещё раз.');
+  });
+}
+function demoApply(t0, act, text, due) {
+  var t = findTask(t0.id), me = DATA.me.id, now = new Date().toISOString();
+  if (act === 'take') { t.st = 'В работе'; t.tk = t.tk || now; }
+  else if (act === 'pause') { t.st = 'На паузе'; t.ps = now; t.note = text; }
+  else if (act === 'resume') { t.st = 'В работе'; t.ps = null; }
+  else if (act === 'done') { if (t.whoId === me && t.fromId !== me) { t.st = 'На проверке'; t.rv = now; } else { t.st = 'Принята'; t.ac = now; } }
+  else if (act === 'cancel') t.st = 'Отменена';
+  else if (act === 'return') { t.st = 'В работе'; t.ret = (t.ret || 0) + 1; t.retNote = text; }
+  else if (act === 'move') t.due = new Date(due + ':00+02:00').toISOString();
 }
 
 // ---------- события ----------
@@ -341,8 +473,15 @@ document.addEventListener('click', function (e) {
   var b = e.target.closest ? e.target.closest('[data-act]') : null;
   if (!b) return;
   var a = b.getAttribute('data-act'), v = b.getAttribute('data-v');
-  if (a === 'sel') { haptic(); openSheet(v); return; }
+  if (a === 'sel') { haptic(); FORM = null; ACT_ERR = ''; openSheet(v); return; }
   if (a === 'close') { closeSheet(); return; }
+  if (a === 'do') { haptic(); startAction(v); return; }
+  if (a === 'send') { submitForm(); return; }
+  if (a === 'back') { FORM = null; ACT_ERR = ''; renderActBox(); return; }
+  if (a === 'quick') {
+    var p = String(v).split('|'), fd = document.getElementById('fdate'), ft = document.getElementById('ftime');
+    if (fd) fd.value = dayPlus(+p[0]); if (ft) ft.value = p[1]; haptic(); return;
+  }
   if (a === 'refresh') { load(); return; }
   if (a === 'file') {
     var t = (DATA.tasks || []).filter(function (x) { return x.id === S.sel; })[0];
