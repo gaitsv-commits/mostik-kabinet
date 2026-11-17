@@ -100,6 +100,10 @@ select.chip{appearance:none;-webkit-appearance:none;padding-right:28px;backgroun
 .file{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);text-align:left;width:100%}
 .file span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .muted{color:var(--muted);font-size:13px}
+.com{display:flex;flex-direction:column;gap:2px;padding:8px 0;border-top:1px solid var(--line2)}
+.com:first-of-type{border-top:0;padding-top:2px}
+.com div{font-size:12px;color:var(--muted)}.com div b{color:var(--text);font-weight:600}
+.com p{margin:0;white-space:pre-wrap;word-break:break-word}
 .acts{display:flex;flex-wrap:wrap;gap:8px}
 .acts .btn{flex:1 1 calc(50% - 4px)}
 .btn.danger{color:var(--red);border-color:var(--red)}
@@ -197,12 +201,13 @@ function sortTasks(a, b) { return (b.di.late - a.di.late) || (a.di.ts - b.di.ts)
 // ---------- части экрана ----------
 function cardHtml(t) {
   var sub = [t.ord, t.cl].filter(Boolean).join(' · ') || t.type || '';
-  var files = (t.files || []).length;
+  var files = (t.files || []).length, coms = t.comN || (t.com || []).length;
   return '<button class="card' + (t.di.late ? ' late' : '') + '" data-act="sel" data-v="' + esc(t.id) + '">' +
     '<div class="r1"><span class="ttl">' + (t.pri === 'Срочно' ? '<span class="urg">Срочно</span>' : '') + esc(t.t || 'Без названия') + '</span>' +
     '<span class="badge ' + (ST_CLS[t.st] || 'st-new') + '">' + esc(t.st) + '</span></div>' +
     '<div class="r2"><span>' + esc(t.who || 'без исполнителя') + (sub ? ' · ' + esc(sub) : '') +
-    (files ? ' · <span class="clip">' + ICON.clip + files + '</span>' : '') + '</span>' +
+    (files ? ' · <span class="clip">' + ICON.clip + files + '</span>' : '') +
+    (coms ? ' · <span class="clip" aria-label="Комментариев: ' + coms + '">💬' + coms + '</span>' : '') + '</span>' +
     '<span class="due' + (t.di.late ? ' red' : '') + '">' + esc(t.di.lbl) + '</span></div>' +
     (t.di.hint ? '<div class="hint' + (t.di.late ? ' red' : '') + '">' + esc(t.di.hint) + '</div>' : '') +
     '</button>';
@@ -329,6 +334,7 @@ function openSheet(id) {
   if (t.desc) h += '<div class="box"><span>Описание</span><div>' + esc(t.desc) + '</div></div>';
   if (t.src) h += '<div class="box"><span>Как поставили</span><div style="font-style:italic">' + esc(t.src) + '</div></div>';
   if (hist.length) h += '<div class="box"><span>История</span>' + hist.map(function (x) { return '<div class="hist"><span>' + esc(stamp(x[0])) + '</span>' + esc(x[1]) + '</div>'; }).join('') + '</div>';
+  h += '<div id="combox">' + comBoxHtml(t) + '</div>';
   var files = t.files || [];
   h += '<div class="box"><span>Файлы</span>' + (files.length ? files.map(function (fl, i) {
     return '<button class="file" data-act="file" data-v="' + i + '">' + ICON.file + '<span>' + esc(fl.n) + '</span></button>';
@@ -340,9 +346,43 @@ function openSheet(id) {
   document.body.style.overflow = 'hidden';
   if (tg && tg.BackButton) { tg.BackButton.show(); }
 }
+function comBoxHtml(t) {
+  var list = t.com || [], total = Math.max(t.comN || 0, list.length);
+  var h = '<div class="box"><span>Комментарии' + (total ? ' · ' + total : '') + '</span>';
+  if (total > list.length) h += '<div class="muted">Показаны последние ' + list.length + '. Все — в Airtable, поле «Комментарии».</div>';
+  h += list.length ? list.map(function (c) {
+    return '<div class="com">' + (c.who || c.at ? '<div><b>' + esc(c.who) + '</b>' + (c.at ? ' · ' + esc(c.at) : '') + '</div>' : '') + '<p>' + esc(c.t) + '</p></div>';
+  }).join('') : '<div class="muted">Комментариев пока нет.</div>';
+  if (t.canCom) {
+    var busy = BUSY && COM_BUSY;
+    h += '<label class="sr" for="ctext">Новый комментарий</label><textarea id="ctext" class="inp" rows="2" maxlength="1000" placeholder="Написать комментарий…">' + esc(COM_DRAFT[t.id] || '') + '</textarea>' +
+      (COM_ERR ? '<div class="note ret">' + esc(COM_ERR) + '</div>' : '') +
+      '<button class="btn primary" data-act="csend"' + (BUSY ? ' disabled' : '') + '>' + (busy ? 'Отправляю…' : 'Отправить комментарий') + '</button>' +
+      '<div class="muted">Увидит ' + esc(comWho(t)) + ' — бот пришлёт сообщение.</div>';
+  }
+  return h + '</div>';
+}
+function comWho(t) {
+  var me = DATA.me.id, ids = t.whoId === me ? [t.fromId] : t.fromId === me ? [t.whoId] : [t.whoId, t.fromId];
+  var nm = { }; nm[t.whoId] = t.who; nm[t.fromId] = t.from;
+  var names = ids.filter(function (x, i) { return x && x !== me && ids.indexOf(x) === i; }).map(function (x) { return nm[x] || '?'; });
+  return names.length ? names.join(' и ') : 'только вы';
+}
+function renderComBox() {
+  var el = document.getElementById('combox'), t = findTask(S.sel);
+  if (el && t) el.innerHTML = comBoxHtml(t);
+}
+function sendComment() {
+  var t = findTask(S.sel); if (!t || BUSY) return;
+  var tx = ((document.getElementById('ctext') || {}).value || '').trim();
+  COM_DRAFT[t.id] = tx;
+  if (!tx) { COM_ERR = 'Напишите комментарий.'; renderComBox(); return; }
+  COM_ERR = ''; COM_BUSY = true;
+  doAction('comment', tx, '');
+}
 function closeSheet() {
   S.sel = null;
-  FORM = null; ACT_ERR = '';
+  FORM = null; ACT_ERR = ''; COM_ERR = '';
   var el = document.getElementById('sheet'); el.hidden = true; el.innerHTML = ''; el.removeAttribute('data-id');
   document.body.style.overflow = '';
   if (tg && tg.BackButton) tg.BackButton.hide();
@@ -350,6 +390,7 @@ function closeSheet() {
 
 // ---------- действия с задачей (те же правила, что у кнопок в чате) ----------
 var FORM = null, BUSY = false, ACT_ERR = '';
+var COM_BUSY = false, COM_ERR = '', COM_DRAFT = {};
 function findTask(id) { return (DATA && DATA.tasks || []).filter(function (x) { return x.id === id; })[0]; }
 function actionsFor(t) {
   var me = DATA.me, st = t.st;
@@ -435,13 +476,18 @@ function submitForm() {
 }
 function doAction(act, text, due) {
   var t = findTask(S.sel); if (!t || BUSY) return;
-  BUSY = true; ACT_ERR = ''; renderActBox();
+  var isCom = act === 'comment';
+  BUSY = true; ACT_ERR = ''; renderActBox(); renderComBox();
   var finish = function (ok, answer) {
-    BUSY = false;
+    BUSY = false; COM_BUSY = false;
     if (ok) {
-      FORM = null; notify('success'); toast(answer || 'Готово');
+      FORM = null; COM_ERR = ''; if (isCom) delete COM_DRAFT[t.id];
+      notify('success'); toast(answer || 'Готово');
       if (DEMO) { render(); openSheet(S.sel); } else load();
-    } else { ACT_ERR = answer; notify('error'); renderActBox(); }
+    } else {
+      if (isCom) COM_ERR = answer; else ACT_ERR = answer;
+      notify('error'); renderActBox(); renderComBox();
+    }
   };
   if (DEMO) { demoApply(t, act, text, due); finish(true, 'Готово (демо — ничего не сохранено)'); return; }
   var body = new URLSearchParams();
@@ -450,7 +496,7 @@ function doAction(act, text, due) {
     if (!r.ok) throw new Error('http ' + r.status);
     return r.json();
   }).then(function (j) {
-    if (j && j.tasks) { finish(false, 'В n8n ещё старая версия кабинета — установите «Мостик — Кабинет (v2)».'); return; }
+    if (j && j.tasks) { finish(false, 'В n8n ещё старая версия кабинета — установите «Мостик — Кабинет (v3)».'); return; }
     finish(!!(j && j.ok), j && j.ok ? j.answer : ((j && j.answer) || errText(j && j.error)));
   }).catch(function () {
     finish(false, 'Не получилось сохранить: нет связи с сервером или ошибка в n8n. Попробуйте ещё раз.');
@@ -462,9 +508,14 @@ function demoApply(t0, act, text, due) {
   else if (act === 'pause') { t.st = 'На паузе'; t.ps = now; t.note = text; }
   else if (act === 'resume') { t.st = 'В работе'; t.ps = null; }
   else if (act === 'done') { if (t.whoId === me && t.fromId !== me) { t.st = 'На проверке'; t.rv = now; } else { t.st = 'Принята'; t.ac = now; } }
-  else if (act === 'cancel') t.st = 'Отменена';
+  else if (act === 'cancel') { t.st = 'Отменена'; t.canCom = false; }
   else if (act === 'return') { t.st = 'В работе'; t.ret = (t.ret || 0) + 1; t.retNote = text; }
   else if (act === 'move') t.due = new Date(due + ':00+02:00').toISOString();
+  else if (act === 'comment') {
+    var d = new Date(), p2 = function (n) { return (n < 10 ? '0' : '') + n; };
+    t.comN = (t.comN || (t.com || []).length) + 1;
+    (t.com = t.com || []).push({ at: p2(d.getDate()) + '.' + p2(d.getMonth() + 1) + ' ' + p2(d.getHours()) + ':' + p2(d.getMinutes()), who: DATA.me.name, t: text });
+  }
 }
 
 // ---------- события ----------
@@ -477,6 +528,7 @@ document.addEventListener('click', function (e) {
   if (a === 'close') { closeSheet(); return; }
   if (a === 'do') { haptic(); startAction(v); return; }
   if (a === 'send') { submitForm(); return; }
+  if (a === 'csend') { haptic(); sendComment(); return; }
   if (a === 'back') { FORM = null; ACT_ERR = ''; renderActBox(); return; }
   if (a === 'quick') {
     var p = String(v).split('|'), fd = document.getElementById('fdate'), ft = document.getElementById('ftime');
@@ -495,6 +547,7 @@ document.addEventListener('click', function (e) {
   haptic(); savePrefs(); render(); window.scrollTo(0, 0);
 });
 document.addEventListener('input', function (e) {
+  if (e.target.id === 'ctext') { if (S.sel) COM_DRAFT[S.sel] = e.target.value; return; }
   if (e.target.id !== 'q') return;
   S.q = e.target.value;
   var r = document.getElementById('results'); if (r) r.innerHTML = resultsHtml();
@@ -511,7 +564,8 @@ function errText(code) {
     bad_signature: 'Не удалось подтвердить вход. Закройте кабинет и откройте снова кнопкой в боте.',
     expired: 'Сеанс устарел. Закройте кабинет и откройте снова кнопкой в боте.',
     no_init_data: 'Откройте кабинет кнопкой в боте Telegram.',
-    no_signature: 'Обновите Telegram до последней версии и откройте кабинет снова.'
+    no_signature: 'Обновите Telegram до последней версии и откройте кабинет снова.',
+    bad_action: 'В n8n старая версия кабинета — установите «Мостик — Кабинет (v3)».'
   })[code] || 'Не удалось загрузить задачи (' + code + '). Нажмите «Обновить».';
 }
 function load() {
@@ -532,14 +586,15 @@ function demoData() {
   var P = { v: 'demoV', y: 'demoY', e: 'demoE', t: 'demoT' };
   var nm = { demoV: 'Владимир', demoY: 'Андрей', demoE: 'Мария', demoT: 'Ольга' };
   var T = function (id, t, who, from, pri, kind, type, due, st, x) {
-    return Object.assign({ id: id, t: t, whoId: who, who: nm[who], fromId: from, from: nm[from], pri: pri, kind: kind, type: type, due: at(due), st: st, cr: at(-30), files: [] }, x || {});
+    return Object.assign({ id: id, t: t, whoId: who, who: nm[who], fromId: from, from: nm[from], pri: pri, kind: kind, type: type, due: at(due), st: st, cr: at(-30), files: [], com: [], canCom: st !== 'Отменена' }, x || {});
   };
   return {
     ok: true, demo: true, at: new Date().toISOString(),
     me: { id: P.v, name: 'Владимир', role: 'Руководитель' },
     people: [{ id: P.v, name: 'Владимир', role: 'Руководитель' }, { id: P.y, name: 'Андрей', role: 'Сотрудник' }, { id: P.e, name: 'Мария', role: 'Сотрудник' }, { id: P.t, name: 'Ольга', role: 'Сотрудник' }],
     tasks: [
-      T('d1', 'Замер на Ботанике, ул. Дачия 12', P.y, P.v, 'Срочно', 'Клиенту', 'По заказу', -2.5, 'В работе', { ord: 'D-1042', cl: 'Петров', tk: at(-20), src: 'Андрей, замер на Ботанике, Дачия 12, в 9, клиент Петров, срочно' }),
+      T('d1', 'Замер на Ботанике, ул. Дачия 12', P.y, P.v, 'Срочно', 'Клиенту', 'По заказу', -2.5, 'В работе', { ord: 'D-1042', cl: 'Петров', tk: at(-20), src: 'Андрей, замер на Ботанике, Дачия 12, в 9, клиент Петров, срочно',
+        com: [{ at: '16.11 18:20', who: 'Андрей', t: 'Клиент просит перенести на 11:00, подъезд со двора.' }, { at: '16.11 18:41', who: 'Владимир', t: 'Хорошо, возьми образцы профиля.' }] }),
       T('d2', 'Коммерческое предложение для Чебан', P.e, P.v, 'Срочно', 'Клиенту', 'По заказу', -48, 'В работе', { ord: 'D-1044', cl: 'Чебан', tk: at(-70) }),
       T('d3', 'Выставить счёт клиенту Морару', P.t, P.v, 'Важно', 'Деньги', 'По заказу', 5, 'В работе', { ord: 'D-1040', cl: 'Морару', tk: at(-3) }),
       T('d4', 'Позвонить поставщику стекла', P.v, P.v, 'Обычно', 'От поставщика', 'Личная', 3, 'Создана', { cl: 'Поставщик стекла' }),
