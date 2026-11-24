@@ -100,6 +100,22 @@ select.chip{appearance:none;-webkit-appearance:none;padding-right:28px;backgroun
 .file{display:flex;align-items:center;gap:8px;min-height:44px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);text-align:left;width:100%}
 .file span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .muted{color:var(--muted);font-size:13px}
+.sec{margin:6px 0 0;font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+.sec.red{color:var(--red)}.sec.amber{color:var(--s-pause)}
+.calm{background:var(--card);border:1px dashed var(--line);border-radius:12px;padding:14px;color:var(--muted);text-align:center}
+.btn.more{color:var(--accent)}
+.back{align-self:flex-start;min-height:40px;border:0;background:none;color:var(--accent);font-weight:600;padding:0}
+button.person{width:100%;text-align:left;gap:8px}
+.person .p-top b{font-size:15px}
+.pchips{display:flex;flex-wrap:wrap;gap:6px}
+.pc{font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px}
+.pc.r{background:var(--redSoft);color:var(--red)}.pc.a{background:var(--s-pause-bg);color:var(--s-pause)}
+.ef{display:flex;flex-direction:column;gap:10px}
+.ef label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+.ef select.inp{appearance:auto}
+.ck{flex-direction:row!important;align-items:center;gap:8px!important}
+.ck input{width:20px;height:20px}
+.file-up{display:flex;align-items:center;justify-content:center;gap:6px}
 .com{display:flex;flex-direction:column;gap:2px;padding:8px 0;border-top:1px solid var(--line2)}
 .com:first-of-type{border-top:0;padding-top:2px}
 .com div{font-size:12px;color:var(--muted)}.com div b{color:var(--text);font-weight:600}
@@ -127,9 +143,10 @@ var Z = 'Europe/Chisinau';
 var CLOSED = ['Принята', 'Отменена'];
 var tg = window.Telegram && window.Telegram.WebApp;
 var DATA = null, DEMO = false, ERR = '', LOADING = true;
-var S = { tab: 'list', scope: 'all', view: 'open', who: 'all', pri: 'all', kind: 'all', q: '', sel: null };
-try { var saved = JSON.parse(localStorage.getItem('mostik-cab') || '{}'); ['tab', 'scope', 'view'].forEach(function (k) { if (saved[k]) S[k] = saved[k]; }); } catch (e) {}
-function savePrefs() { try { localStorage.setItem('mostik-cab', JSON.stringify({ tab: S.tab, scope: S.scope, view: S.view })); } catch (e) {} }
+// Главный экран: «Мои» — только то, что требует действия; «Команда» (руководителям) — люди с проблемами. «Все задачи» — поиск и фильтры.
+var S = { home: 'mine', screen: 'home', view: 'open', who: 'all', pri: 'all', q: '', sel: null };
+try { var saved = JSON.parse(localStorage.getItem('mostik-cab2') || '{}'); if (saved.home) S.home = saved.home; } catch (e) {}
+function savePrefs() { try { localStorage.setItem('mostik-cab2', JSON.stringify({ home: S.home })); } catch (e) {} }
 
 function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 var fDay = new Intl.DateTimeFormat('en-CA', { timeZone: Z, year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -174,26 +191,20 @@ function tasksNow() {
   var now = new Date();
   return (DATA.tasks || []).map(function (t) { var x = Object.assign({}, t); x.di = dueInfo(t, now); return x; });
 }
-function inScope(t) {
-  var me = DATA.me.id;
-  if (S.scope === 'mine') return t.whoId === me || (!t.whoId && t.fromId === me);
-  if (S.scope === 'set') return t.fromId === me && t.whoId !== me;
-  return true;
-}
+function isLeader() { var r = DATA && DATA.me && DATA.me.role; return r === 'Руководитель' || r === 'Руководитель участка'; }
+function whyOf(t) { return (t.risk && t.risk.why) || []; }
+function hasWhy(t, c) { return whyOf(t).some(function (w) { return w.c === c; }); }
 var VIEWS = [
-  ['open', 'открытые', function (t) { return isOpen(t); }],
-  ['overdue', 'просрочено', function (t) { return t.di.late; }],
-  ['today', 'сегодня', function (t) { return t.di.today; }],
-  ['review', 'на проверке', function (t) { return t.st === 'На проверке'; }],
-  ['pause', 'на паузе', function (t) { return t.st === 'На паузе'; }],
-  ['done', 'принятые', function (t) { return t.st === 'Принята'; }]
+  ['open', 'Открытые', function (t) { return isOpen(t); }],
+  ['overdue', 'Просрочено', function (t) { return t.di.late; }],
+  ['review', 'На проверке', function (t) { return t.st === 'На проверке'; }],
+  ['pause', 'На паузе', function (t) { return t.st === 'На паузе'; }],
+  ['done', 'Принятые', function (t) { return t.st === 'Принята'; }]
 ];
 function viewFn(k) { for (var i = 0; i < VIEWS.length; i++) if (VIEWS[i][0] === k) return VIEWS[i][2]; return VIEWS[0][2]; }
-function match(t, skip) {
+function match(t) {
   var q = S.q.trim().toLowerCase();
-  return (skip === 'who' || S.who === 'all' || t.whoId === S.who) &&
-    (skip === 'pri' || S.pri === 'all' || (t.pri || 'Обычно') === S.pri) &&
-    (S.kind === 'all' || t.kind === S.kind) &&
+  return (S.who === 'all' || t.whoId === S.who) && (S.pri === 'all' || (t.pri || 'Обычно') === S.pri) &&
     (!q || [t.t, t.ord, t.cl, t.who, t.from, t.desc].join(' ').toLowerCase().indexOf(q) >= 0);
 }
 function sortTasks(a, b) { return (b.di.late - a.di.late) || (a.di.ts - b.di.ts); }
@@ -215,98 +226,91 @@ function cardHtml(t) {
 function chip(act, val, label, on, n) {
   return '<button class="chip" data-act="' + act + '" data-v="' + esc(val) + '" aria-pressed="' + on + '">' + esc(label) + (n != null ? '<i>' + n + '</i>' : '') + '</button>';
 }
-function filtersHtml(base) {
-  var h = '<label class="search"><span class="sr">Поиск</span>' + ICON.search +
-    '<input id="q" type="search" placeholder="Задача, заказ, клиент, человек" value="' + esc(S.q) + '" autocomplete="off"></label>';
-  var people = DATA.people || [];
-  if (people.length > 1) {
-    h += '<div class="chips"><span class="chip-lbl">Кто</span>' + chip('who', 'all', 'Все', S.who === 'all', base.filter(function (t) { return match(t, 'who'); }).length);
-    people.forEach(function (p) {
-      var n = base.filter(function (t) { return match(t, 'who') && t.whoId === p.id; }).length;
-      h += chip('who', p.id, p.name, S.who === p.id, n);
-    });
-    h += '</div>';
-  }
-  h += '<div class="chips"><span class="chip-lbl">Приоритет</span>';
-  ['all', 'Срочно', 'Важно', 'Обычно'].forEach(function (p) {
-    var n = base.filter(function (t) { return match(t, 'pri') && (p === 'all' || (t.pri || 'Обычно') === p); }).length;
-    h += chip('pri', p, p === 'all' ? 'Все' : p, S.pri === p, n);
+function block(cls, title, arr) {
+  if (!arr.length) return '';
+  return '<h2 class="sec ' + cls + '">' + title + '</h2><div class="list">' + arr.map(cardHtml).join('') + '</div>';
+}
+// «Мои»: просрочено, ждут моей проверки, уточнить (нет исполнителя/срока), сегодня. Пустые блоки не показываем.
+function homeMineHtml() {
+  var me = DATA.me.id;
+  var all = tasksNow().filter(function (t) { return isOpen(t) && (t.whoId === me || t.fromId === me); });
+  var late = all.filter(function (t) { return t.di.late; }).sort(sortTasks);
+  var rev = all.filter(function (t) { return t.st === 'На проверке' && t.fromId === me && t.whoId !== me; });
+  var fix = all.filter(function (t) { return !t.di.late && t.fromId === me && (hasWhy(t, 'noexec') || hasWhy(t, 'nodl')); });
+  var today = all.filter(function (t) { return t.di.today && !t.di.late && rev.indexOf(t) < 0 && fix.indexOf(t) < 0; }).sort(sortTasks);
+  var h = block('red', 'Просрочено', late) + block('amber', 'Ждут вашей проверки', rev) +
+    block('amber', 'Уточнить: нет исполнителя или срока', fix) + block('', 'Сегодня', today);
+  return h || '<div class="calm">Срочного нет — всё под контролем 👌</div>';
+}
+function plural(n, a, b, c) { var m = n % 10, h = n % 100; return m === 1 && h !== 11 ? a : m >= 2 && m <= 4 && (h < 12 || h > 14) ? b : c; }
+// Проблемы человека: просрочки и признаки «сироты» из сторожа (не взята вовремя, долго на паузе, возвраты)
+function problemsOf(p, all) {
+  var mine = all.filter(function (t) { return t.whoId === p.id && isOpen(t); });
+  var late = mine.filter(function (t) { return t.di.late; }).sort(sortTasks);
+  var by = function (c) { return mine.filter(function (t) { return hasWhy(t, c); }); };
+  var take = by('take'), pause = by('pause'), ret = by('ret'), chips = [];
+  if (late.length) chips.push(['r', late.length + ' ' + plural(late.length, 'просрочена', 'просрочены', 'просрочено')]);
+  if (take.length) chips.push(['a', take.length + ' не ' + plural(take.length, 'взята', 'взяты', 'взято') + ' вовремя']);
+  if (pause.length) chips.push(['a', pause.length + ' долго на паузе']);
+  if (ret.length) chips.push(['a', ret.length + ' с возвратами']);
+  var w = late[0] || take[0] || pause[0] || ret[0];
+  var line = !w ? '' : w.t + ' — ' + (w.di.late ? w.di.hint : ((whyOf(w).filter(function (x) { return x.c === 'take' || x.c === 'pause' || x.c === 'ret'; })[0] || {}).t || ''));
+  return { chips: chips, line: line };
+}
+function homeTeamHtml() {
+  var me = DATA.me.id, all = tasksNow(), bad = [], good = [];
+  (DATA.people || []).filter(function (p) { return p.id !== me; }).forEach(function (p) {
+    var x = problemsOf(p, all); (x.chips.length ? bad : good).push({ p: p, x: x });
   });
-  var kinds = ['Клиенту', 'От поставщика', 'Внутреннее', 'Деньги', 'Гарантия'];
-  h += '<label class="sr" for="kind">Вид обязательства</label><select id="kind" class="chip" aria-pressed="' + (S.kind !== 'all') + '">' +
-    '<option value="all">Вид: все</option>' + kinds.map(function (k) { return '<option value="' + k + '"' + (S.kind === k ? ' selected' : '') + '>' + k + '</option>'; }).join('') + '</select></div>';
+  var h = bad.map(function (b) {
+    return '<button class="person" data-act="person" data-v="' + esc(b.p.id) + '"><span class="p-top"><span class="av" style="background:' + avColor(b.p.id) + '">' +
+      esc((b.p.name || '?').charAt(0)) + '</span><b>' + esc(b.p.name) + '</b></span><span class="pchips">' +
+      b.x.chips.map(function (c) { return '<span class="pc ' + c[0] + '">' + esc(c[1]) + '</span>'; }).join('') + '</span>' +
+      (b.x.line ? '<span class="muted">' + esc(b.x.line) + '</span>' : '') + '</button>';
+  }).join('');
+  if (good.length) h += '<div class="calm">' + good.map(function (g) { return esc(g.p.name); }).join(', ') + ' — всё в порядке ✓</div>';
+  if (!bad.length && !good.length) h += '<div class="calm">В команде пока никого нет.</div>';
+  h += block('amber', 'Ждут вашей проверки', all.filter(function (t) { return isOpen(t) && t.st === 'На проверке' && t.fromId === me && t.whoId !== me; }));
   return h;
 }
-function hasFilters() { return S.who !== 'all' || S.pri !== 'all' || S.kind !== 'all' || !!S.q.trim(); }
-function resultsHtml() {
-  var all = tasksNow().filter(inScope);
-  if (S.tab === 'board') {
-    var cols = [['Создана', 'Не взяты'], ['В работе', 'В работе'], ['На паузе', 'На паузе'], ['На проверке', 'На проверке'], ['Принята', 'Приняты (14 дн)']];
-    var shown = all.filter(function (t) { return match(t); });
-    return '<div class="board">' + cols.map(function (c) {
-      var arr = shown.filter(function (t) { return t.st === c[0]; }).sort(sortTasks);
-      return '<section class="col"><h3><span>' + c[1] + '</span><span>' + arr.length + '</span></h3>' +
-        (arr.length ? arr.map(cardHtml).join('') : '<div class="muted" style="padding:8px 4px">пусто</div>') + '</section>';
-    }).join('') + '</div>';
-  }
-  var rows = all.filter(viewFn(S.view)).filter(function (t) { return match(t); }).sort(sortTasks);
-  var title = VIEWS.filter(function (v) { return v[0] === S.view; })[0][1];
-  var h = '<div class="count"><span>' + title.charAt(0).toUpperCase() + title.slice(1) + ': ' + rows.length + '</span><span>сначала просроченные</span></div>';
-  if (!rows.length) return h + '<div class="empty">Задач нет.' + (hasFilters() ? ' <button data-act="reset">Сбросить фильтры</button>' : '') + '</div>';
-  return h + '<div class="list">' + rows.map(cardHtml).join('') + '</div>';
+// «Все задачи»: поиск и фильтры без счётчиков
+function allHtml() {
+  var h = '<button class="back" data-act="home">← Назад</button>' +
+    '<label class="search"><span class="sr">Поиск</span>' + ICON.search +
+    '<input id="q" type="search" placeholder="Задача, заказ, клиент, человек" value="' + esc(S.q) + '" autocomplete="off"></label>' +
+    '<div class="chips">' + VIEWS.map(function (v) { return chip('view', v[0], v[1], S.view === v[0]); }).join('') + '</div>';
+  var people = DATA.people || [];
+  if (people.length > 1) h += '<div class="chips"><span class="chip-lbl">Кто</span>' + chip('who', 'all', 'Все', S.who === 'all') +
+    people.map(function (p) { return chip('who', p.id, p.name, S.who === p.id); }).join('') + '</div>';
+  h += '<div class="chips"><span class="chip-lbl">Приоритет</span>' + ['all', 'Срочно', 'Важно', 'Обычно'].map(function (p) {
+    return chip('pri', p, p === 'all' ? 'Все' : p, S.pri === p); }).join('') + '</div>';
+  return h + '<div id="results">' + resultsHtml() + '</div>';
 }
-function teamHtml() {
-  var all = tasksNow();
-  return '<div class="list">' + (DATA.people || []).map(function (p) {
-    var mine = all.filter(function (t) { return t.whoId === p.id; });
-    var open = mine.filter(isOpen);
-    var late = open.filter(function (t) { return t.di.late; }).length;
-    var today = open.filter(function (t) { return t.di.today; }).length;
-    var rev = open.filter(function (t) { return t.st === 'На проверке'; }).length;
-    var pause = open.filter(function (t) { return t.st === 'На паузе'; }).length;
-    var next = open.slice().sort(sortTasks).slice(0, 3);
-    return '<article class="person"><div class="p-top"><span class="av" style="background:' + avColor(p.id) + '">' + esc((p.name || '?').charAt(0)) + '</span>' +
-      '<div style="flex:1;min-width:0"><b>' + esc(p.name) + '</b><div class="muted">' + esc(p.role || '') + '</div></div></div>' +
-      '<div class="stats"><div><b>' + open.length + '</b><span>открыто</span></div><div><b class="' + (late ? 'red' : '') + '">' + late + '</b><span>просрочено</span></div>' +
-      '<div><b>' + today + '</b><span>сегодня</span></div><div><b>' + (rev + pause) + '</b><span>проверка/пауза</span></div></div>' +
-      (next.length ? next.map(function (t) {
-        return '<div class="next"><span>' + esc(t.t) + '</span><span class="due' + (t.di.late ? ' red' : '') + '">' + esc(t.di.late ? 'просрочено' : t.st === 'На проверке' ? 'на проверке' : t.di.lbl) + '</span></div>';
-      }).join('') : '<div class="muted">Открытых задач нет</div>') +
-      '<button class="btn" data-act="person" data-v="' + esc(p.id) + '">Все задачи · ' + open.length + '</button></article>';
-  }).join('') + '</div>';
+function hasFilters() { return S.who !== 'all' || S.pri !== 'all' || !!S.q.trim(); }
+function resultsHtml() {
+  var rows = tasksNow().filter(viewFn(S.view)).filter(match).sort(sortTasks);
+  if (!rows.length) return '<div class="empty">Задач нет.' + (hasFilters() ? ' <button data-act="reset">Сбросить фильтры</button>' : '') + '</div>';
+  return '<div class="list">' + rows.map(cardHtml).join('') + '</div>';
 }
 function render() {
   var app = document.getElementById('app');
   var me = DATA && DATA.me;
-  var top = '<header class="hdr"><div class="hdr-top"><div><h1>Задачи</h1><small>' +
+  var top = '<header class="hdr"><div class="hdr-top"><div><h1>Кабинет</h1><small>' +
     (me ? esc(me.name) + ' · ' + esc(me.role) : 'Капитанский мостик DIVETRO') + '</small></div>' +
     '<button class="icon-btn" data-act="refresh" aria-label="Обновить">' + ICON.refresh + '</button></div>';
   if (LOADING && !DATA) { app.innerHTML = top + '</header><div class="msg">Загружаю задачи…</div>'; return; }
   if (!DATA) { app.innerHTML = top + '</header><div class="msg"><div>' + esc(ERR) + '</div><button class="btn primary" data-act="refresh">Обновить</button></div>'; return; }
-  var all = tasksNow().filter(inScope);
-  top += '<div class="seg" role="group" aria-label="Чьи задачи">' +
-    [['all', 'Все'], ['mine', 'Мои'], ['set', 'Поставил я']].map(function (s) {
-      return '<button data-act="scope" data-v="' + s[0] + '" aria-pressed="' + (S.scope === s[0]) + '">' + s[1] + '</button>';
-    }).join('') + '</div></header>';
-  var tabs = [['list', 'Список'], ['board', 'Доска']];
-  if ((DATA.people || []).length > 1) tabs.push(['team', 'Команда']);
-  if (S.tab === 'team' && tabs.length < 3) S.tab = 'list';
-  var h = top + '<nav class="tabs" aria-label="Вид">' + tabs.map(function (t) {
-    return '<button data-act="tab" data-v="' + t[0] + '" aria-pressed="' + (S.tab === t[0]) + '">' + t[1] + '</button>';
-  }).join('') + '</nav><main class="wrap">';
+  var lead = isLeader();
+  if (!lead) S.home = 'mine';
+  if (lead && S.screen === 'home') top += '<div class="seg" role="group" aria-label="Что показать">' +
+    [['mine', 'Мои'], ['team', 'Команда']].map(function (x) {
+      return '<button data-act="hometab" data-v="' + x[0] + '" aria-pressed="' + (S.home === x[0]) + '">' + x[1] + '</button>';
+    }).join('') + '</div>';
+  var h = top + '</header><main class="wrap">';
   if (DEMO) h += '<div class="banner">Демо-режим с примером задач. Настоящие задачи — откройте кабинет кнопкой в боте.</div>';
   if (ERR) h += '<div class="banner">' + esc(ERR) + '</div>';
-  if (S.tab === 'team') h += teamHtml();
-  else {
-    if (S.tab === 'list') {
-      h += '<div class="tiles">' + VIEWS.map(function (v) {
-        var n = all.filter(v[2]).length;
-        return '<button class="tile' + (v[0] === 'overdue' && n ? ' warn' : '') + '" data-act="view" data-v="' + v[0] + '" aria-pressed="' + (S.view === v[0]) + '"><b>' + n + '</b><span>' + v[1] + '</span></button>';
-      }).join('') + '</div>';
-    }
-    var base = S.tab === 'list' ? all.filter(viewFn(S.view)) : all;
-    h += filtersHtml(base) + '<div id="results">' + resultsHtml() + '</div>';
-  }
+  if (S.screen === 'all') h += allHtml();
+  else h += (S.home === 'team' && lead ? homeTeamHtml() : homeMineHtml()) + '<button class="btn more" data-act="all">Все задачи и поиск →</button>';
   h += '<div class="muted" style="text-align:center">Обновлено ' + esc(stamp(DATA.at)) + '</div></main>';
   app.innerHTML = h;
 }
@@ -335,16 +339,39 @@ function openSheet(id) {
   if (t.src) h += '<div class="box"><span>Как поставили</span><div style="font-style:italic">' + esc(t.src) + '</div></div>';
   if (hist.length) h += '<div class="box"><span>История</span>' + hist.map(function (x) { return '<div class="hist"><span>' + esc(stamp(x[0])) + '</span>' + esc(x[1]) + '</div>'; }).join('') + '</div>';
   h += '<div id="combox">' + comBoxHtml(t) + '</div>';
-  var files = t.files || [];
-  h += '<div class="box"><span>Файлы</span>' + (files.length ? files.map(function (fl, i) {
-    return '<button class="file" data-act="file" data-v="' + i + '">' + ICON.file + '<span>' + esc(fl.n) + '</span></button>';
-  }).join('') : '<div class="muted">Файлов нет.</div>') + '</div>';
+  h += '<div id="filebox">' + fileBoxHtml(t) + '</div>';
   h += '</div>';
   var keep = el.hidden === false && el.getAttribute('data-id') === id;
   el.innerHTML = h; el.hidden = false; el.setAttribute('data-id', id);
   if (!keep) el.scrollTop = 0;
   document.body.style.overflow = 'hidden';
   if (tg && tg.BackButton) { tg.BackButton.show(); }
+}
+var FILE_BUSY = false, FILE_ERR = '';
+function fileBoxHtml(t) {
+  var files = t.files || [];
+  var h = '<div class="box"><span>Файлы</span>' + (files.length ? files.map(function (fl, i) {
+    return '<button class="file" data-act="file" data-v="' + i + '">' + ICON.file + '<span>' + esc(fl.n) + '</span></button>';
+  }).join('') : '<div class="muted">Файлов нет.</div>');
+  if (t.canCom) h += (FILE_ERR ? '<div class="note ret">' + esc(FILE_ERR) + '</div>' : '') +
+    (FILE_BUSY ? '<div class="muted">Загружаю файл…</div>' :
+      '<label class="btn file-up" for="fpick">' + ICON.clip + ' Прикрепить файл</label><input id="fpick" class="sr" type="file"' + (BUSY ? ' disabled' : '') + '>') +
+    '<div class="muted">PDF, Word, Excel, фото — до 5 МБ. Второй участник получит файл в боте.</div>';
+  return h + '</div>';
+}
+function renderFileBox() { var el = document.getElementById('filebox'), t = findTask(S.sel); if (el && t) el.innerHTML = fileBoxHtml(t); }
+function pickFile(inp) {
+  var file = inp.files && inp.files[0], t = findTask(S.sel);
+  if (!file || !t || BUSY) return;
+  if (file.size > 5 * 1024 * 1024) { FILE_ERR = 'Файл больше 5 МБ — отправьте его в бот ответом на карточку задачи.'; renderFileBox(); return; }
+  FILE_ERR = ''; FILE_BUSY = true; renderFileBox();
+  var rd = new FileReader();
+  rd.onload = function () {
+    var data = String(rd.result || ''); data = data.slice(data.indexOf(',') + 1);
+    doAction('file', '', '', { name: file.name, mime: file.type || 'application/octet-stream', data: data });
+  };
+  rd.onerror = function () { FILE_BUSY = false; FILE_ERR = 'Не удалось прочитать файл.'; renderFileBox(); };
+  rd.readAsDataURL(file);
 }
 function comBoxHtml(t) {
   var list = t.com || [], total = Math.max(t.comN || 0, list.length);
@@ -382,7 +409,7 @@ function sendComment() {
 }
 function closeSheet() {
   S.sel = null;
-  FORM = null; ACT_ERR = ''; COM_ERR = '';
+  FORM = null; ACT_ERR = ''; COM_ERR = ''; FILE_ERR = '';
   var el = document.getElementById('sheet'); el.hidden = true; el.innerHTML = ''; el.removeAttribute('data-id');
   document.body.style.overflow = '';
   if (tg && tg.BackButton) tg.BackButton.hide();
@@ -409,6 +436,7 @@ function actionsFor(t) {
     a.push(['move', 'Перенести срок', '']);
     a.push(['cancel', 'Отменить', 'danger']);
   }
+  if (t.canEdit) a.push(['edit', 'Изменить задачу', '']);
   return a;
 }
 function dayPlus(n) { return fDay.format(new Date(Date.now() + n * 864e5)); }
@@ -416,6 +444,7 @@ function formHtml(t) {
   var err = ACT_ERR ? '<div class="note ret">' + esc(ACT_ERR) + '</div>' : '';
   var btns = '<div class="acts"><button class="btn primary" data-act="send"' + (BUSY ? ' disabled' : '') + '>' + (BUSY ? 'Отправляю…' : 'Сохранить') + '</button>' +
     '<button class="btn" data-act="back"' + (BUSY ? ' disabled' : '') + '>Назад</button></div>';
+  if (FORM.act === 'edit') return editFormHtml(t) + err + btns;
   if (FORM.act === 'move') {
     var d = t.due ? new Date(t.due) : new Date(Date.now() + 864e5);
     var dv = t.due ? fDay.format(d) : dayPlus(1), tv = t.due ? fHM.format(d) : '18:00';
@@ -428,6 +457,29 @@ function formHtml(t) {
   }
   var lbl = FORM.act === 'pause' ? 'Почему пауза? Постановщик увидит причину.' : 'Что исправить? Исполнитель получит этот текст.';
   return '<div class="box"><label for="ftext">' + lbl + '</label><textarea id="ftext" class="inp" rows="3" maxlength="500">' + esc(FORM.text || '') + '</textarea></div>' + err + btns;
+}
+var PRI = ['Срочно', 'Важно', 'Обычно'], KINDS = ['Клиенту', 'От поставщика', 'Внутреннее', 'Деньги', 'Гарантия'], TYPES = ['Разовая', 'По заказу', 'Регулярная', 'Личная'];
+function opts(list, cur, empty) {
+  return (empty ? '<option value=""' + (cur ? '' : ' selected') + '>' + empty + '</option>' : '') +
+    list.map(function (x) { var v = typeof x === 'string' ? x : x.id, n = typeof x === 'string' ? x : x.name;
+      return '<option value="' + esc(v) + '"' + (v === cur ? ' selected' : '') + '>' + esc(n) + '</option>'; }).join('');
+}
+function editFormHtml(t) {
+  var people = (DATA.all && DATA.all.length ? DATA.all : DATA.people) || [];
+  if (t.whoId && !people.some(function (p) { return p.id === t.whoId; })) people = people.concat([{ id: t.whoId, name: t.who }]);
+  var d = t.due ? new Date(t.due) : null;
+  return '<div class="box ef"><span>Изменить задачу</span>' +
+    '<label for="e_t">Название<input id="e_t" class="inp" maxlength="200" value="' + esc(t.t) + '"></label>' +
+    '<label for="e_who">Исполнитель<select id="e_who" class="inp">' + opts(people, t.whoId, t.whoId ? '' : '— не выбран —') + '</select></label>' +
+    '<div class="row-inp"><label for="e_date">Дата<input id="e_date" class="inp" type="date" value="' + (d ? fDay.format(d) : '') + '"' + (d ? '' : ' disabled') + '></label>' +
+    '<label for="e_time">Время<input id="e_time" class="inp" type="time" value="' + (d ? fHM.format(d) : '18:00') + '"' + (d ? '' : ' disabled') + '></label></div>' +
+    '<label class="ck" for="e_nodue"><input id="e_nodue" type="checkbox"' + (d ? '' : ' checked') + '> Без срока</label>' +
+    '<div class="row-inp"><label for="e_pri">Приоритет<select id="e_pri" class="inp">' + opts(PRI, t.pri || 'Обычно') + '</select></label>' +
+    '<label for="e_kind">Вид<select id="e_kind" class="inp">' + opts(KINDS, t.kind, '—') + '</select></label></div>' +
+    '<label for="e_type">Тип<select id="e_type" class="inp">' + opts(TYPES, t.type, '—') + '</select></label>' +
+    '<label for="e_cl">Клиент / контрагент<input id="e_cl" class="inp" maxlength="200" value="' + esc(t.cl || '') + '"></label>' +
+    '<label for="e_d">Описание<textarea id="e_d" class="inp" rows="3" maxlength="2000">' + esc(t.desc || '') + '</textarea></label>' +
+    '<div class="muted">Если сменить исполнителя, новый получит задачу в боте, прежний — сообщение, что она снята.</div></div>';
 }
 function actBoxHtml(t) {
   var acts = actionsFor(t);
@@ -454,7 +506,7 @@ function confirmAsk(text, cb) {
 function startAction(act) {
   var t = findTask(S.sel); if (!t || BUSY) return;
   ACT_ERR = '';
-  if (act === 'pause' || act === 'return' || act === 'move') { FORM = { id: t.id, act: act, text: '' }; renderActBox(); return; }
+  if (act === 'pause' || act === 'return' || act === 'move' || act === 'edit') { FORM = { id: t.id, act: act, text: '' }; renderActBox(); return; }
   var me = DATA.me, review = t.whoId === me.id && t.fromId !== me.id;
   var q = act === 'cancel' ? 'Отменить задачу «' + t.t + '»?' :
     act === 'done' ? (review ? 'Отправить «' + t.t + '» на проверку постановщику?' : (t.st === 'На проверке' ? 'Принять' : 'Закрыть') + ' задачу «' + t.t + '»?') : '';
@@ -463,6 +515,15 @@ function startAction(act) {
 }
 function submitForm() {
   if (!FORM || BUSY) return;
+  if (FORM.act === 'edit') {
+    var val = function (k) { return ((document.getElementById(k) || {}).value || '').trim(); };
+    if (!val('e_t')) { ACT_ERR = 'Название не может быть пустым.'; renderActBox(); return; }
+    var nod = (document.getElementById('e_nodue') || {}).checked, ed = val('e_date'), et = val('e_time');
+    if (!nod && (!/^\d{4}-\d{2}-\d{2}$/.test(ed) || !/^\d{2}:\d{2}/.test(et))) { ACT_ERR = 'Укажите дату и время или отметьте «Без срока».'; renderActBox(); return; }
+    var x = { e_t: val('e_t'), e_d: val('e_d'), e_who: val('e_who'), e_pri: val('e_pri'), e_kind: val('e_kind'), e_type: val('e_type'), e_cl: val('e_cl') };
+    doAction('edit', '', nod ? 'none' : ed + 'T' + et.slice(0, 5), x);
+    return;
+  }
   if (FORM.act === 'move') {
     var dv = (document.getElementById('fdate') || {}).value || '', tv = (document.getElementById('ftime') || {}).value || '';
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dv) || !/^\d{2}:\d{2}/.test(tv)) { ACT_ERR = 'Укажите дату и время.'; renderActBox(); return; }
@@ -474,35 +535,36 @@ function submitForm() {
     doAction(FORM.act, tx, '');
   }
 }
-function doAction(act, text, due) {
+function doAction(act, text, due, extra) {
   var t = findTask(S.sel); if (!t || BUSY) return;
-  var isCom = act === 'comment';
+  var isCom = act === 'comment', isFile = act === 'file';
   BUSY = true; ACT_ERR = ''; renderActBox(); renderComBox();
   var finish = function (ok, answer) {
-    BUSY = false; COM_BUSY = false;
+    BUSY = false; COM_BUSY = false; FILE_BUSY = false;
     if (ok) {
       FORM = null; COM_ERR = ''; if (isCom) delete COM_DRAFT[t.id];
       notify('success'); toast(answer || 'Готово');
       if (DEMO) { render(); openSheet(S.sel); } else load();
     } else {
-      if (isCom) COM_ERR = answer; else ACT_ERR = answer;
-      notify('error'); renderActBox(); renderComBox();
+      if (isCom) COM_ERR = answer; else if (isFile) FILE_ERR = answer; else ACT_ERR = answer;
+      notify('error'); renderActBox(); renderComBox(); renderFileBox();
     }
   };
-  if (DEMO) { demoApply(t, act, text, due); finish(true, 'Готово (демо — ничего не сохранено)'); return; }
+  if (DEMO) { demoApply(t, act, text, due, extra); finish(true, 'Готово (демо — ничего не сохранено)'); return; }
   var body = new URLSearchParams();
   body.set('initData', tg.initData); body.set('act', act); body.set('rec', t.id); body.set('text', text || ''); body.set('due', due || '');
+  Object.keys(extra || {}).forEach(function (k) { body.set(k, extra[k]); });
   fetch(API, { method: 'POST', body: body }).then(function (r) {
     if (!r.ok) throw new Error('http ' + r.status);
     return r.json();
   }).then(function (j) {
-    if (j && j.tasks) { finish(false, 'В n8n ещё старая версия кабинета — установите «Мостик — Кабинет (v3)».'); return; }
+    if (j && j.tasks) { finish(false, 'В n8n ещё старая версия кабинета — установите «Мостик — Кабинет (v4)».'); return; }
     finish(!!(j && j.ok), j && j.ok ? j.answer : ((j && j.answer) || errText(j && j.error)));
   }).catch(function () {
     finish(false, 'Не получилось сохранить: нет связи с сервером или ошибка в n8n. Попробуйте ещё раз.');
   });
 }
-function demoApply(t0, act, text, due) {
+function demoApply(t0, act, text, due, x) {
   var t = findTask(t0.id), me = DATA.me.id, now = new Date().toISOString();
   if (act === 'take') { t.st = 'В работе'; t.tk = t.tk || now; }
   else if (act === 'pause') { t.st = 'На паузе'; t.ps = now; t.note = text; }
@@ -511,6 +573,13 @@ function demoApply(t0, act, text, due) {
   else if (act === 'cancel') { t.st = 'Отменена'; t.canCom = false; }
   else if (act === 'return') { t.st = 'В работе'; t.ret = (t.ret || 0) + 1; t.retNote = text; }
   else if (act === 'move') t.due = new Date(due + ':00+02:00').toISOString();
+  else if (act === 'edit') {
+    var p = (DATA.all || DATA.people || []).filter(function (y) { return y.id === x.e_who; })[0];
+    t.t = x.e_t; t.desc = x.e_d; t.pri = x.e_pri; t.kind = x.e_kind; t.type = x.e_type; t.cl = x.e_cl;
+    if (p && p.id !== t.whoId) { t.whoId = p.id; t.who = p.name; t.st = 'Создана'; }
+    t.due = due === 'none' ? null : new Date(due + ':00+02:00').toISOString();
+  }
+  else if (act === 'file') (t.files = t.files || []).push({ n: x.name, u: 'https://example.com' });
   else if (act === 'comment') {
     var d = new Date(), p2 = function (n) { return (n < 10 ? '0' : '') + n; };
     t.comN = (t.comN || (t.com || []).length) + 1;
@@ -541,9 +610,12 @@ document.addEventListener('click', function (e) {
     if (fl) { if (tg && tg.openLink) tg.openLink(fl.u); else window.open(fl.u, '_blank'); }
     return;
   }
-  if (a === 'person') { S.tab = 'list'; S.view = 'open'; S.scope = 'all'; S.who = v; }
-  else if (a === 'reset') { S.who = 'all'; S.pri = 'all'; S.kind = 'all'; S.q = ''; }
-  else if (a === 'tab' || a === 'scope' || a === 'view' || a === 'who' || a === 'pri') S[a] = v;
+  if (a === 'person') { S.screen = 'all'; S.view = 'open'; S.who = v; S.pri = 'all'; S.q = ''; }
+  else if (a === 'all') { S.screen = 'all'; S.view = 'open'; S.who = 'all'; S.pri = 'all'; S.q = ''; }
+  else if (a === 'home') S.screen = 'home';
+  else if (a === 'hometab') S.home = v;
+  else if (a === 'reset') { S.who = 'all'; S.pri = 'all'; S.q = ''; }
+  else if (a === 'view' || a === 'who' || a === 'pri') S[a] = v;
   haptic(); savePrefs(); render(); window.scrollTo(0, 0);
 });
 document.addEventListener('input', function (e) {
@@ -553,8 +625,8 @@ document.addEventListener('input', function (e) {
   var r = document.getElementById('results'); if (r) r.innerHTML = resultsHtml();
 });
 document.addEventListener('change', function (e) {
-  if (e.target.id !== 'kind') return;
-  S.kind = e.target.value; render();
+  if (e.target.id === 'fpick') { pickFile(e.target); return; }
+  if (e.target.id === 'e_nodue') { var on = e.target.checked; ['e_date', 'e_time'].forEach(function (k) { var x = document.getElementById(k); if (x) x.disabled = on; }); }
 });
 
 // ---------- загрузка ----------
@@ -565,7 +637,8 @@ function errText(code) {
     expired: 'Сеанс устарел. Закройте кабинет и откройте снова кнопкой в боте.',
     no_init_data: 'Откройте кабинет кнопкой в боте Telegram.',
     no_signature: 'Обновите Telegram до последней версии и откройте кабинет снова.',
-    bad_action: 'В n8n старая версия кабинета — установите «Мостик — Кабинет (v3)».'
+    bad_action: 'В n8n старая версия кабинета — установите «Мостик — Кабинет (v4)».',
+    bad_file: 'Файл не подошёл: размер до 5 МБ.'
   })[code] || 'Не удалось загрузить задачи (' + code + '). Нажмите «Обновить».';
 }
 function load() {
@@ -586,12 +659,13 @@ function demoData() {
   var P = { v: 'demoV', y: 'demoY', e: 'demoE', t: 'demoT' };
   var nm = { demoV: 'Владимир', demoY: 'Андрей', demoE: 'Мария', demoT: 'Ольга' };
   var T = function (id, t, who, from, pri, kind, type, due, st, x) {
-    return Object.assign({ id: id, t: t, whoId: who, who: nm[who], fromId: from, from: nm[from], pri: pri, kind: kind, type: type, due: at(due), st: st, cr: at(-30), files: [], com: [], canCom: st !== 'Отменена' }, x || {});
+    return Object.assign({ id: id, t: t, whoId: who, who: nm[who], fromId: from, from: nm[from], pri: pri, kind: kind, type: type, due: at(due), st: st, cr: at(-30), files: [], com: [], canCom: st !== 'Отменена', canEdit: CLOSED.indexOf(st) < 0, risk: { s: 0, why: [] } }, x || {});
   };
   return {
     ok: true, demo: true, at: new Date().toISOString(),
     me: { id: P.v, name: 'Владимир', role: 'Руководитель' },
     people: [{ id: P.v, name: 'Владимир', role: 'Руководитель' }, { id: P.y, name: 'Андрей', role: 'Сотрудник' }, { id: P.e, name: 'Мария', role: 'Сотрудник' }, { id: P.t, name: 'Ольга', role: 'Сотрудник' }],
+    all: [{ id: P.y, name: 'Андрей' }, { id: P.v, name: 'Владимир' }, { id: P.e, name: 'Мария' }, { id: P.t, name: 'Ольга' }],
     tasks: [
       T('d1', 'Замер на Ботанике, ул. Дачия 12', P.y, P.v, 'Срочно', 'Клиенту', 'По заказу', -2.5, 'В работе', { ord: 'D-1042', cl: 'Петров', tk: at(-20), src: 'Андрей, замер на Ботанике, Дачия 12, в 9, клиент Петров, срочно',
         com: [{ at: '16.11 18:20', who: 'Андрей', t: 'Клиент просит перенести на 11:00, подъезд со двора.' }, { at: '16.11 18:41', who: 'Владимир', t: 'Хорошо, возьми образцы профиля.' }] }),
@@ -599,9 +673,9 @@ function demoData() {
       T('d3', 'Выставить счёт клиенту Морару', P.t, P.v, 'Важно', 'Деньги', 'По заказу', 5, 'В работе', { ord: 'D-1040', cl: 'Морару', tk: at(-3) }),
       T('d4', 'Позвонить поставщику стекла', P.v, P.v, 'Обычно', 'От поставщика', 'Личная', 3, 'Создана', { cl: 'Поставщик стекла' }),
       T('d5', 'Фото и размеры замера — в чат заказа', P.y, P.e, 'Обычно', 'Внутреннее', 'По заказу', -18, 'На проверке', { ord: 'D-1041', cl: 'Гуцу', tk: at(-40), rv: at(-18), files: [{ n: 'zamer_1.jpg', u: 'https://example.com' }, { n: 'razmery.pdf', u: 'https://example.com' }] }),
-      T('d6', 'Подтвердить дату поставки фурнитуры', P.e, P.v, 'Важно', 'От поставщика', 'По заказу', 22, 'На паузе', { ord: 'D-1038', cl: 'Николаев', note: 'Поставщик не отвечает', ps: at(-26) }),
-      T('d7', 'Заказать профиль у поставщика', P.e, P.v, 'Важно', 'От поставщика', 'По заказу', 24, 'Создана', { ord: 'D-1038', cl: 'Николаев' }),
-      T('d8', 'Замер: офис на Рышкановке', P.y, P.e, 'Обычно', 'Клиенту', 'По заказу', 23, 'Создана', { ord: 'D-1045', cl: 'Гончар' }),
+      T('d6', 'Подтвердить дату поставки фурнитуры', P.e, P.v, 'Важно', 'От поставщика', 'По заказу', 22, 'На паузе', { ord: 'D-1038', cl: 'Николаев', note: 'Поставщик не отвечает', ps: at(-26), risk: { s: 20, why: [{ c: 'pause', t: 'на паузе 2 раб. дн. (Поставщик не отвечает)' }] } }),
+      T('d7', 'Заказать профиль у поставщика', P.e, P.v, 'Важно', 'От поставщика', 'По заказу', 24, 'Создана', { ord: 'D-1038', cl: 'Николаев', risk: { s: 25, why: [{ c: 'take', t: 'не взята 6 ч (норма 4 ч)' }] } }),
+      T('d8', 'Замер: офис на Рышкановке', P.y, P.e, 'Обычно', 'Клиенту', 'По заказу', 23, 'Создана', { ord: 'D-1045', cl: 'Гончар', risk: { s: 25, why: [{ c: 'take', t: 'не взята 26 ч (норма 4 ч)' }] } }),
       T('d9', 'Гарантия: регулировка роликов', P.y, P.t, 'Важно', 'Гарантия', 'По заказу', 50, 'На паузе', { ord: 'D-0987', cl: 'Лупу', note: 'Ждём ролики от поставщика', ret: 1, retNote: 'Дверь всё ещё заедает' }),
       T('d10', 'Монтаж двери-купе, Чеканы', P.y, P.v, 'Важно', 'Клиенту', 'По заказу', 72, 'Создана', { ord: 'D-1035', cl: 'Русу' }),
       T('d11', 'Сверка оплат за неделю', P.t, P.v, 'Обычно', 'Деньги', 'Регулярная', 100, 'Создана'),
